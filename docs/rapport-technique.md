@@ -1,0 +1,128 @@
+# Rapport technique — Mukanda
+
+**Sujet :** Transparence des marchés publics, offres scellées et paiements par jalons  
+**Établissement :** Université de Kinshasa  
+**Promotion :** Master 1 Mathématiques, Statistiques et Informatique  
+**Groupe :** 19  
+**Membres :** Kazadi Kabuya Augustin, Luabeya Mukendi Barnabe, Mbuyi Mutungilayi Benjamin  
+**État du rapport :** prototype déployé et vérifié par RPC sur Polygon Amoy ; publication Vercel et audit Slither restent à réaliser.
+
+## Résumé
+
+Mukanda est un prototype de DApp destiné à rendre traçables les étapes d’un marché public. Un contrat Solidity gère les rôles, les périodes d’engagement et de révélation, l’attribution et les validations de jalons. Les dossiers volumineux restent hors chaîne sur IPFS ; leurs CID et empreintes sont ancrés dans le contrat. Les offres sont engagées par un hash dont le préimage reste local jusqu’à la révélation. Les paiements sont volontairement simulés : le contrat n’effectue aucun transfert de jeton ou de monnaie.
+
+La version préparée compile localement, passe dix tests Hardhat, un build Next.js, le typecheck et ESLint. Le contrat est déployé sur Polygon Amoy à l’adresse `0x15Ba0b28c6DAc1d865F891c083A61d3E6808b982`, bloc `51909186`. Le contrat est lisible sur le RPC ; son code source n’est pas encore vérifié sur Polygonscan.
+
+## 1. Problématique et objectifs
+
+Un marché public mobilise des documents, des échéances et plusieurs rôles. Une base centralisée peut rendre difficile la vérification indépendante des modifications ou de l’ordre des opérations. Le projet étudie l’apport d’un registre public pour les preuves et les transitions, sans confondre traçabilité et justice administrative.
+
+Les objectifs sont de publier un marché, préserver l’offre avant échéance, vérifier sa révélation, enregistrer une décision et suivre l’exécution par jalons. Le prototype vise la démonstration pédagogique, non la gestion de marchés réels.
+
+## 2. Architecture
+
+```mermaid
+flowchart LR
+  U[Utilisateur] --> W[Next.js / React]
+  W --> M[MetaMask]
+  M --> C[Contrat Solidity sur Polygon Amoy]
+  W --> R[RPC Amoy en lecture]
+  W --> A[API Next.js /api/pinata]
+  A --> P[Pinata / IPFS]
+  S[Sauvegarde locale chiffrée] -. importée à la révélation .-> W
+```
+
+Le frontend utilise Next.js App Router, React, TypeScript, Tailwind CSS, Lucide et ethers.js. MetaMask signe les transactions. Le contrat `PublicProcurement` utilise OpenZeppelin `AccessControl`. Hardhat 3 compile et exécute les tests. Un endpoint serveur transmet les fichiers à Pinata sans exposer `PINATA_JWT` au navigateur. Aucun backend de données générales n’est requis.
+
+## 3. Données et stockage
+
+| Donnée | Stockage | Exposition |
+| --- | --- | --- |
+| Titre, description, budget indicatif, calendrier | Contrat | Public |
+| CID du dossier et empreinte SHA-256 | Contrat | Public |
+| Fichier du dossier | IPFS via Pinata | Public selon les réglages de Pinata ; ne pas y placer un secret en clair |
+| Engagement d’offre | Contrat | Public, sans préimage |
+| Montant et hash de proposition | Contrat après révélation | Public |
+| Secret et texte de l’offre avant révélation | Mémoire du navigateur puis sauvegarde chiffrée locale | Non transmis à la chaîne avant révélation |
+| Décision et validations | Contrat et événements | Public |
+| Paiement simulé | Compteur et état de jalon | Public, sans mouvement financier |
+
+Le CID n’est pas un mécanisme de confidentialité. Une empreinte protège l’intégrité contre une modification non détectée, mais ne cache pas le contenu d’un fichier public.
+
+## 4. Rôles et autorisations
+
+`DEFAULT_ADMIN_ROLE` administre les rôles OpenZeppelin. `AUTHORITY_ROLE` peut publier les marchés, attribuer le marché et créer les jalons. `CONTROLLER_ROLE` peut enregistrer sa validation. `COMPANY_ROLE` est requis pour engager une offre. Toute adresse peut lire les données et déclencher l’ouverture de la période de révélation après clôture, sans pouvoir réécrire les engagements.
+
+Le contrat refuse de cumuler les rôles Entreprise, Autorité et Contrôleur ; son constructeur exige aussi des adresses distinctes pour le déployeur administrateur, l’autorité et le contrôleur. Toute adresse sans rôle peut appeler une seule fois `registerCompany()` pour obtenir `COMPANY_ROLE` ; un rôle privilégié ou une inscription existante entraîne un refus. L’espace Administration permet aussi d’attribuer/révoquer `COMPANY_ROLE`, `AUTHORITY_ROLE` et `CONTROLLER_ROLE`, mais ne permet pas de transférer `DEFAULT_ADMIN_ROLE`. Deux validateurs distincts restent requis pour compléter un jalon.
+
+Le portail public présente un choix de profil. Le visiteur consulte sans portefeuille ; à sa première connexion comme entreprise, une adresse sans rôle confirme dans MetaMask la transaction d’inscription, puis retrouve son rôle lors des connexions suivantes. Les formulaires autorité et contrôleur s’activent selon les rôles relus sur le contrat. L’espace administrateur apparaît uniquement à `DEFAULT_ADMIN_ROLE` et peut gérer les rôles métier. La délégation du rôle administrateur n’est pas exposée dans l’interface.
+
+## 5. Mécanisme commit-reveal
+
+Pour une offre, le navigateur génère 32 octets avec `ethers.randomBytes(32)`. Il calcule l’empreinte du texte de proposition et l’engagement :
+
+```text
+proposalHash = keccak256(UTF8(offerText))
+commitment = keccak256(abi.encode(marketId, bidder, amount, proposalHash, secret))
+```
+
+L’encodage `abi.encode` est typé et non ambigu. Le contrat lie le hash à l’identifiant du marché et à l’adresse de l’entreprise ; réutiliser un secret ou une offre dans un autre contexte ne donne pas le même engagement. Avant la révélation, seule la valeur `commitment` est enregistrée.
+
+La sauvegarde téléchargée contient le marché, l’adresse, le montant, le texte, l’empreinte et le secret. Son contenu JSON est chiffré par AES-256-GCM. La clé est dérivée du mot de passe par PBKDF2-SHA-256 avec sel aléatoire et 310 000 itérations. Au moment de révéler, l’application déchiffre et contrôle l’adresse du portefeuille ; le texte complet n’est envoyé qu’après la clôture. Le contrat recalcule lui-même `proposalHash` à partir de ce texte avant de comparer l’engagement, puis stocke l’empreinte validée.
+
+Le mécanisme ne masque pas l’adresse ayant soumis un engagement, ni le moment de sa soumission. Il ne garantit pas la disponibilité du secret : si l’entreprise perd le fichier ou son mot de passe, elle ne peut pas révéler. Après révélation, les données enregistrées sont publiques. Commit-reveal n’empêche pas la collusion ni une décision administrative injuste.
+
+## 6. Attribution et jalons
+
+L’autorité ne peut attribuer qu’après la date limite de révélation. Le contrat vérifie que le portefeuille choisi a révélé une offre et que le montant reste dans le budget indicatif. Il stocke le titulaire, le montant, l’horodatage et une référence de décision. Le choix du titulaire reste une décision administrative ; le contrat vérifie les règles programmées, pas la qualité de l’évaluation.
+
+L’autorité définit des jalons avec un montant non nul et une description. La somme planifiée ne peut dépasser le montant attribué. Le titulaire demande une validation. Après une approbation par l’autorité et une autre par un contrôleur distinct, le contrat marque le jalon payé et incrémente `totalPaid`. Un jalon déjà payé ne peut être demandé ou libéré à nouveau.
+
+`SimulatedPaymentReleased` est un événement comptable de démonstration. Il n’y a ni fonds bloqués, ni jeton de paiement, ni garantie de règlement. Une extension à des paiements réels demanderait une étude juridique, un actif dédié, une gestion de trésorerie et un audit indépendant.
+
+## 7. Modèle de menace et mesures
+
+| Risque | Mesure actuelle | Limite restante |
+| --- | --- | --- |
+| Appel non autorisé | Modificateurs `onlyRole` au niveau du contrat | L’administration des clés reste hors chaîne |
+| Offre modifiée ou révélée avec mauvais secret | Hash recalculé avec `abi.encode` et texte révélé recalculé côté contrat | Le secret peut être perdu avant révélation |
+| Engagement/révélation tardive | Vérification de `block.timestamp` et de l’état du marché | Dépend de fenêtres d’horloge et d’une ouverture de phase appelée |
+| Double paiement | État `paid`, validateurs distincts, somme plafonnée | Aucun vrai transfert n’est testé |
+| Réentrance | Aucune fonction de transfert externe dans cette version | À réévaluer si des jetons sont ajoutés |
+| Clé Pinata exposée | JWT serveur dans `PINATA_JWT` ; validation type/taille/origine et quota mémoire | Le quota mémoire ne suffit pas en déploiement serverless multi-instance ; pas d’analyse antivirus |
+| Document confidentiel divulgué | Avertissement de ne pas téléverser de secret en clair | IPFS public ne fournit pas de contrôle d’accès |
+| Décision arbitraire | Référence de décision enregistrée | La blockchain ne vérifie pas l’équité de la procédure |
+
+Les entrées sont vérifiées dans les fonctions sensibles. Aucun transfert ne justifie actuellement l’usage de `ReentrancyGuard`. Le contrat n’offre pas de fonction d’urgence ou de pause : aucune fonction de mutation après attribution n’est exposée hormis les opérations de jalon, et l’ajout d’un mécanisme de pause devrait définir précisément les opérations bloquées et les pouvoirs de reprise.
+
+## 8. Tests et vérifications
+
+Les tests automatisés actuels couvrent : création autorisée et refus non autorisé ; dépôt réservé à `COMPANY_ROLE`, auto-inscription unique et refus des rôles incompatibles ; engagement unique et rejet tardif ; révélation avant/après la fenêtre et rejet d’un montant ou texte modifié ; attribution par l’autorité ; double approbation distincte ; plafond du total des jalons.
+
+Résultats au moment de la rédaction : 10 tests passent, `solc 0.8.28` compile, `npm run build`, `npm run typecheck` et `npm run lint` passent. Solhint 6.2.5 termine avec 0 erreur et 84 avertissements de documentation NatSpec, recommandations d’indexation d’événements et de gas ; ceux-ci ne constituent pas 84 vulnérabilités confirmées. La génération du PowerPoint produit 15 diapositives. Ces vérifications ne constituent pas une analyse formelle.
+
+L’analyse `npm audit --omit=dev` ne rapporte pas de vulnérabilité runtime. `npm audit` relève des alertes dans l’arbre de développement (dont Zod, glob et minimatch) ; les corrections proposées par npm impliquent une migration majeure forcée, non appliquée. L’alerte transitive `image-size` de PptxGenJS est surchargée vers la version corrigée 2.0.4.
+
+**Analyse Slither :** non exécutée, car Python/Slither n’est pas installé dans l’environnement de travail vérifié. À exécuter avant la soutenance avec `slither . --compile-force-framework hardhat` dans un environnement Python configuré. Le résultat doit être annexé et chaque alerte étudiée. Aucune conclusion de sécurité fondée sur Slither n’est revendiquée.
+
+## 9. Coûts en gas
+
+Le contrat courant a consommé `3,411,584` unités de gas à un prix effectif d’environ `30 gwei`, soit environ `0.10234752 POL` de test. Ces jetons n’ont aucune valeur réelle. Les gas des autres opérations restent à mesurer à partir de leurs reçus de transaction.
+
+Les champs compacts du struct `Market` sont regroupés afin de limiter les slots de stockage utilisés pour son état et ses échéances.
+
+## 10. Déploiement et reproductibilité
+
+Le script `scripts/deploy.ts` cible le chain ID `80002`, exige `DEPLOYER_PRIVATE_KEY` et des adresses distinctes pour les rôles initiaux. Il attend le reçu confirmé puis écrit l’adresse, le bloc, le hash et le gas dans `deployments/polygonAmoy.json`. Le contrat courant est `0x15Ba0b28c6DAc1d865F891c083A61d3E6808b982`, bloc `51909186`, transaction `0x369ba97ca0d64f1ea2dbe973636a118d02f66df3603bb1e8dbbfb491363fd6b2`. L’inscription entreprise a été simulée avec succès via RPC ; les rôles initiaux sont confirmés. La publication GitHub/Vercel et la vérification du code source restent à faire.
+
+Un contrôle final doit encore être réalisé en navigation privée et depuis un appareil indépendant après publication Vercel. La clé du portefeuille de démonstration a été exposée pendant la préparation ; ce compte est réservé au testnet et ne doit jamais être réutilisé avec des fonds réels.
+
+## 11. Limites et évolutions
+
+Le prototype n’intègre pas The Graph, un mécanisme de paiement réel, une procédure de qualification avancée, un audit externe, une authentification organisationnelle, un rate limiter distribué ni une gouvernance multi-signature. La liste publique de marchés est adaptée à une démonstration et plafonnée à 300 entrées dans le client.
+
+Évolutions proposées : événements indexés avec The Graph ; révocation et rotation encadrées des rôles ; gestion formelle de suspension ; tests fuzz/invariant ; vérification indépendante du bytecode ; journalisation des preuves de décision ; politique de conservation et de chiffrement des documents ; procédure de récupération de sauvegarde ; analyse des coûts de gas sur un déploiement Amoy réel.
+
+## Conclusion
+
+Le prototype illustre ce que la blockchain peut apporter à la traçabilité d’un marché et ce qu’elle ne peut pas garantir. Le déploiement Polygon Amoy est effectué et vérifié par RPC ; les prochaines étapes sont l’audit indépendant/Slither, la vérification du code source sur Polygonscan et la publication GitHub/Vercel. La démonstration repose toujours sur la conservation prudente du secret et sur des décisions administratives contrôlées par des humains.
