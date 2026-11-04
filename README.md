@@ -12,7 +12,7 @@ Projet académique de Blockchain et Cryptomonnaies, Groupe 19, Université de Ki
 
 Prototype de DApp pour publier des appels d’offres, engager puis révéler des offres, enregistrer une décision d’attribution et suivre des jalons d’exécution. Le contrat applique les rôles et les échéances ; il ne décide pas si une attribution est administrativement juste.
 
-**État vérifié dans ce dépôt :** contrat avec rôles séparés et inscription entreprise déployé sur Polygon Amoy ; dix tests Hardhat, build Next.js, typecheck et lint passent. Le portail public local est configuré pour ce contrat. Le dépôt GitHub privé est créé, mais les sources applicatives restent à pousser et le frontend Vercel n’est pas encore publié.
+**État vérifié dans ce dépôt :** contrat avec rôles séparés et inscription entreprise déployé sur Polygon Amoy ; dix tests Hardhat, build Next.js, typecheck et lint passent. Le frontend de production est publié sur [Vercel](https://mukanda-marches-publics.vercel.app) et le code est versionné dans le dépôt GitHub privé [BarnabeDewa/master-marches-publics](https://github.com/BarnabeDewa/master-marches-publics). L’intégration GitHub-Vercel pour les déploiements automatiques attend encore l’autorisation d’accès au dépôt privé.
 
 ## Fonctionnalités
 
