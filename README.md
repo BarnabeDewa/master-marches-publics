@@ -12,7 +12,7 @@ Projet académique de Blockchain et Cryptomonnaies, Groupe 19, Université de Ki
 
 Prototype de DApp pour publier des appels d’offres, engager puis révéler des offres, enregistrer une décision d’attribution et suivre des jalons d’exécution. Le contrat applique les rôles et les échéances ; il ne décide pas si une attribution est administrativement juste.
 
-**État vérifié dans ce dépôt :** contrat avec rôles séparés et inscription entreprise déployé sur Polygon Amoy ; dix tests Hardhat, build Next.js, typecheck et lint passent. Le frontend de production est publié sur [Vercel](https://mukanda-marches-publics.vercel.app) et le code est versionné dans le dépôt GitHub privé [BarnabeDewa/master-marches-publics](https://github.com/BarnabeDewa/master-marches-publics). L’intégration GitHub-Vercel pour les déploiements automatiques attend encore l’autorisation d’accès au dépôt privé.
+**État vérifié dans ce dépôt :** nouveau contrat avec inscription entreprise et clôture de marché à trois approbations déployé sur Polygon Amoy ; onze tests Hardhat, build Next.js, typecheck et lint passent. Le frontend de production est publié sur [Vercel](https://mukanda-marches-publics.vercel.app) et le code est versionné dans le dépôt GitHub privé [BarnabeDewa/master-marches-publics](https://github.com/BarnabeDewa/master-marches-publics). Les marchés du contrat précédent restent consultables en archive.
 
 ## Fonctionnalités
 
@@ -24,7 +24,7 @@ Prototype de DApp pour publier des appels d’offres, engager puis révéler des
 - Engagement commit-reveal lié à l’identifiant du marché, au portefeuille, au montant, à l’empreinte de l’offre et à un secret aléatoire.
 - Sauvegarde locale de révélation chiffrée avec AES-GCM et clé dérivée par PBKDF2-SHA-256.
 - Attribution après la clôture de révélation, avec titulaire et référence de décision.
-- Jalons plafonnés au montant attribué et libérés dans le registre seulement après deux validations distinctes.
+- Jalons plafonnés au montant attribué ; chaque libération est simulée après validation distincte de l’Autorité et du Contrôleur. Après paiement de tous les jalons prévus, l’entreprise demande la clôture et les deux rôles doivent l’approuver pour passer le marché à « Terminé ».
 - Dashboard français responsive, MetaMask, Polygon Amoy, consultation du contrat et liens vers l’explorateur.
 - Téléversement Pinata côté serveur (PDF/DOCX/JPG/PNG jusqu’à 4 Mo) : le JWT n’est jamais exposé au navigateur.
 
@@ -39,9 +39,10 @@ Les paiements sont explicitement simulés : le contrat ne transfère ni POL ni j
 - `src/components/` : formulaires d’opérations DApp.
 - `src/lib/` : ABI, paramètres réseau, engagements et sauvegardes chiffrées.
 - `docs/` : rapport technique et présentation PowerPoint.
-- `deployments/polygonAmoy.json` : manifeste du déploiement Amoy confirmé, avec adresse, transaction, bloc, gas et rôles.
+- `deployments/polygonAmoy.json` : manifeste du contrat Amoy actif.
+- `deployments/polygonAmoyArchive.json` : manifeste de l’ancien contrat, conservé en lecture seule pour afficher les marchés historiques.
 
-Déploiement courant : [contrat sur PolygonScan Amoy](https://amoy.polygonscan.com/address/0x15Ba0b28c6DAc1d865F891c083A61d3E6808b982), bloc `51909186`, [transaction de création](https://amoy.polygonscan.com/tx/0x369ba97ca0d64f1ea2dbe973636a118d02f66df3603bb1e8dbbfb491363fd6b2). Le reçu indique `3,411,584` gas, soit environ `0.10234752 POL` de test. Le code source n’est pas encore vérifié sur Polygonscan.
+Contrat actif : [sur PolygonScan Amoy](https://amoy.polygonscan.com/address/0x140ec5224844B2645ba8952BB1b73FFE89c02fE6), bloc `52147494`, [transaction de création](https://amoy.polygonscan.com/tx/0x8bf83eb941d5faa99fbc14307c28a9b3fd6a81a8319635a0aa763a51ca1b448d). Le reçu indique `3,969,951` gas, soit environ `0.11909853 POL` de test. L’ancien contrat [reste consultable en archive](https://amoy.polygonscan.com/address/0x15Ba0b28c6DAc1d865F891c083A61d3E6808b982) ; ses marchés n’ont pas été migrés. Le code source du nouveau contrat n’est pas encore vérifié sur Polygonscan.
 
 ## Captures d’écran
 

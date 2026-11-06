@@ -5,13 +5,13 @@
 **Promotion :** Master 1 Mathématiques, Statistiques et Informatique  
 **Groupe :** 19  
 **Membres :** Kazadi Kabuya Augustin, Luabeya Mukendi Barnabe, Mbuyi Mutungilayi Benjamin  
-**État du rapport :** prototype déployé et vérifié par RPC sur Polygon Amoy ; publication Vercel et audit Slither restent à réaliser.
+**État du rapport :** contrat avec demande de clôture et double approbation déployé sur Polygon Amoy ; frontend Vercel et archives de l’ancien contrat disponibles. Tests E2E du nouveau cycle et audit Slither restent à réaliser.
 
 ## Résumé
 
 Mukanda est un prototype de DApp destiné à rendre traçables les étapes d’un marché public. Un contrat Solidity gère les rôles, les périodes d’engagement et de révélation, l’attribution et les validations de jalons. Les dossiers volumineux restent hors chaîne sur IPFS ; leurs CID et empreintes sont ancrés dans le contrat. Les offres sont engagées par un hash dont le préimage reste local jusqu’à la révélation. Les paiements sont volontairement simulés : le contrat n’effectue aucun transfert de jeton ou de monnaie.
 
-La version préparée compile localement, passe dix tests Hardhat, un build Next.js, le typecheck et ESLint. Le contrat est déployé sur Polygon Amoy à l’adresse `0x15Ba0b28c6DAc1d865F891c083A61d3E6808b982`, bloc `51909186`. Le contrat est lisible sur le RPC ; son code source n’est pas encore vérifié sur Polygonscan.
+La version préparée compile localement, passe onze tests Hardhat, un build Next.js, le typecheck et ESLint. Le nouveau contrat est déployé sur Polygon Amoy à l’adresse `0x140ec5224844B2645ba8952BB1b73FFE89c02fE6`, bloc `52147494`. Le frontend est publié à l’adresse https://mukanda-marches-publics.vercel.app. L’ancien contrat reste disponible en lecture seule pour ses marchés historiques. Le code source du nouveau contrat n’est pas encore vérifié sur Polygonscan.
 
 ## 1. Problématique et objectifs
 
@@ -55,7 +55,7 @@ Le CID n’est pas un mécanisme de confidentialité. Une empreinte protège l�
 
 Le contrat refuse de cumuler les rôles Entreprise, Autorité et Contrôleur ; son constructeur exige aussi des adresses distinctes pour le déployeur administrateur, l’autorité et le contrôleur. Toute adresse sans rôle peut appeler une seule fois `registerCompany()` pour obtenir `COMPANY_ROLE` ; un rôle privilégié ou une inscription existante entraîne un refus. L’espace Administration permet aussi d’attribuer/révoquer `COMPANY_ROLE`, `AUTHORITY_ROLE` et `CONTROLLER_ROLE`, mais ne permet pas de transférer `DEFAULT_ADMIN_ROLE`. Deux validateurs distincts restent requis pour compléter un jalon.
 
-Le portail public présente un choix de profil. Le visiteur consulte sans portefeuille ; à sa première connexion comme entreprise, une adresse sans rôle confirme dans MetaMask la transaction d’inscription, puis retrouve son rôle lors des connexions suivantes. Les formulaires autorité et contrôleur s’activent selon les rôles relus sur le contrat. L’espace administrateur apparaît uniquement à `DEFAULT_ADMIN_ROLE` et peut gérer les rôles métier. La délégation du rôle administrateur n’est pas exposée dans l’interface.
+Le portail public présente un choix de profil. Le visiteur consulte sans portefeuille ; à sa première connexion comme entreprise, une adresse sans rôle confirme dans MetaMask la transaction d’inscription, puis retrouve son rôle lors des connexions suivantes. Les formulaires autorité et contrôleur s’activent selon les rôles relus sur le contrat. Après la fin des jalons, l’entreprise titulaire demande la clôture ; l’Autorité et le Contrôleur l’approuvent avec des portefeuilles distincts. Le statut devient `Completed` uniquement après ces deux approbations. L’espace administrateur apparaît uniquement à `DEFAULT_ADMIN_ROLE` et peut gérer les rôles métier. La délégation du rôle administrateur n’est pas exposée dans l’interface.
 
 ## 5. Mécanisme commit-reveal
 
@@ -99,7 +99,7 @@ Les entrées sont vérifiées dans les fonctions sensibles. Aucun transfert ne j
 
 Les tests automatisés actuels couvrent : création autorisée et refus non autorisé ; dépôt réservé à `COMPANY_ROLE`, auto-inscription unique et refus des rôles incompatibles ; engagement unique et rejet tardif ; révélation avant/après la fenêtre et rejet d’un montant ou texte modifié ; attribution par l’autorité ; double approbation distincte ; plafond du total des jalons.
 
-Résultats au moment de la rédaction : 10 tests passent, `solc 0.8.28` compile, `npm run build`, `npm run typecheck` et `npm run lint` passent. Solhint 6.2.5 termine avec 0 erreur et 84 avertissements de documentation NatSpec, recommandations d’indexation d’événements et de gas ; ceux-ci ne constituent pas 84 vulnérabilités confirmées. La génération du PowerPoint produit 15 diapositives. Ces vérifications ne constituent pas une analyse formelle.
+Résultats au moment de la rédaction : 11 tests passent, `solc 0.8.28` compile, `npm run build`, `npm run typecheck` et `npm run lint` passent. Solhint 6.2.5 termine avec 0 erreur et 84 avertissements de documentation NatSpec, recommandations d’indexation d’événements et de gas ; ceux-ci ne constituent pas 84 vulnérabilités confirmées. La génération du PowerPoint produit 15 diapositives. Ces vérifications ne constituent pas une analyse formelle.
 
 L’analyse `npm audit --omit=dev` ne rapporte pas de vulnérabilité runtime. `npm audit` relève des alertes dans l’arbre de développement (dont Zod, glob et minimatch) ; les corrections proposées par npm impliquent une migration majeure forcée, non appliquée. L’alerte transitive `image-size` de PptxGenJS est surchargée vers la version corrigée 2.0.4.
 
@@ -107,15 +107,15 @@ L’analyse `npm audit --omit=dev` ne rapporte pas de vulnérabilité runtime. `
 
 ## 9. Coûts en gas
 
-Le contrat courant a consommé `3,411,584` unités de gas à un prix effectif d’environ `30 gwei`, soit environ `0.10234752 POL` de test. Ces jetons n’ont aucune valeur réelle. Les gas des autres opérations restent à mesurer à partir de leurs reçus de transaction.
+Le contrat actif a consommé `3,969,951` unités de gas à un prix effectif d’environ `30 gwei`, soit environ `0.11909853 POL` de test. Ces jetons n’ont aucune valeur réelle. Les gas des autres opérations restent à mesurer à partir de leurs reçus de transaction.
 
 Les champs compacts du struct `Market` sont regroupés afin de limiter les slots de stockage utilisés pour son état et ses échéances.
 
 ## 10. Déploiement et reproductibilité
 
-Le script `scripts/deploy.ts` cible le chain ID `80002`, exige `DEPLOYER_PRIVATE_KEY` et des adresses distinctes pour les rôles initiaux. Il attend le reçu confirmé puis écrit l’adresse, le bloc, le hash et le gas dans `deployments/polygonAmoy.json`. Le contrat courant est `0x15Ba0b28c6DAc1d865F891c083A61d3E6808b982`, bloc `51909186`, transaction `0x369ba97ca0d64f1ea2dbe973636a118d02f66df3603bb1e8dbbfb491363fd6b2`. L’inscription entreprise a été simulée avec succès via RPC ; les rôles initiaux sont confirmés. La publication GitHub/Vercel et la vérification du code source restent à faire.
+Le script `scripts/deploy.ts` cible le chain ID `80002`, exige `DEPLOYER_PRIVATE_KEY` et des adresses distinctes pour les rôles initiaux. Il attend le reçu confirmé puis écrit l’adresse, le bloc, le hash et le gas dans `deployments/polygonAmoy.json`. Le nouveau contrat actif est `0x140ec5224844B2645ba8952BB1b73FFE89c02fE6`, bloc `52147494`, transaction `0x8bf83eb941d5faa99fbc14307c28a9b3fd6a81a8319635a0aa763a51ca1b448d`. L’ancien contrat `0x15Ba0b28c6DAc1d865F891c083A61d3E6808b982` est conservé dans `deployments/polygonAmoyArchive.json` et configuré comme archive en lecture seule ; les marchés précédents n’ont pas été migrés. Le code est dans le dépôt GitHub privé https://github.com/BarnabeDewa/master-marches-publics et le frontend est publié sur Vercel. Les essais E2E du nouveau contrat, la vérification du code source Polygonscan et l’audit externe restent à faire.
 
-Un contrôle final doit encore être réalisé en navigation privée et depuis un appareil indépendant après publication Vercel. La clé du portefeuille de démonstration a été exposée pendant la préparation ; ce compte est réservé au testnet et ne doit jamais être réutilisé avec des fonds réels.
+Un contrôle final doit encore être réalisé en navigation privée et depuis un appareil indépendant. La clé du portefeuille de démonstration a été exposée pendant la préparation ; ce compte est réservé au testnet et ne doit jamais être réutilisé avec des fonds réels.
 
 ## 11. Limites et évolutions
 
@@ -125,4 +125,4 @@ Le prototype n’intègre pas The Graph, un mécanisme de paiement réel, une pr
 
 ## Conclusion
 
-Le prototype illustre ce que la blockchain peut apporter à la traçabilité d’un marché et ce qu’elle ne peut pas garantir. Le déploiement Polygon Amoy est effectué et vérifié par RPC ; les prochaines étapes sont l’audit indépendant/Slither, la vérification du code source sur Polygonscan et la publication GitHub/Vercel. La démonstration repose toujours sur la conservation prudente du secret et sur des décisions administratives contrôlées par des humains.
+Le prototype illustre ce que la blockchain peut apporter à la traçabilité d’un marché et ce qu’elle ne peut pas garantir. Le nouveau contrat Polygon Amoy et le frontend Vercel sont publiés ; onze tests automatisés passent. L’ancien contrat et ses marchés restent consultables en archive. Les prochaines étapes sont les essais E2E du nouveau contrat avec les portefeuilles approvisionnés en POL de test, l’audit indépendant/Slither et la vérification du code source sur Polygonscan. La démonstration repose toujours sur la conservation prudente du secret et sur des décisions administratives contrôlées par des humains.

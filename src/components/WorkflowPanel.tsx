@@ -44,6 +44,14 @@ type MilestoneRow = {
   controllerValidator: string;
 };
 
+type MarketCompletionRow = {
+  requested: boolean;
+  authorityApproved: boolean;
+  controllerApproved: boolean;
+  authorityValidator: string;
+  controllerValidator: string;
+};
+
 type HistoryRow = {
   name: string;
   detail: string;
@@ -165,12 +173,14 @@ export default function WorkflowPanel({ activeSection, markets, account, signer,
   const [roleTarget, setRoleTarget] = useState("");
   const [roleToManage, setRoleToManage] = useState<"authority" | "controller" | "company">("company");
   const [milestonesByMarket, setMilestonesByMarket] = useState<Record<string, MilestoneRow[]>>({});
+  const [completionByMarket, setCompletionByMarket] = useState<Record<string, MarketCompletionRow>>({});
   const [history, setHistory] = useState<HistoryRow[]>([]);
   const [revealedOffers, setRevealedOffers] = useState<Record<string, RevealedOfferRow[]>>({});
   const [isLoadingRevealedOffers, setIsLoadingRevealedOffers] = useState(false);
 
   const configuredAddress = isConfigured && contractAddress ? contractAddress : "";
   const awardedMarkets = markets.filter((market) => market.status === 2 || market.status === 3);
+  const openAwardedMarkets = markets.filter((market) => market.status === 2 && !completionByMarket[String(market.id)]?.requested);
   const commitMarkets = markets.filter((market) => market.status === 0 && market.commitDeadline > now);
   const revealMarkets = markets.filter((market) => market.status === 1);
   const awardableMarkets = revealMarkets.filter((market) => market.revealDeadline <= now);
@@ -182,9 +192,9 @@ export default function WorkflowPanel({ activeSection, markets, account, signer,
     ? awardMarketId
     : String(awardableMarkets[0]?.id ?? "");
   const selectedAwardOffers = revealedOffers[activeAwardMarketId] ?? [];
-  const activeMilestoneMarketId = awardedMarkets.some((market) => String(market.id) === milestoneMarketId)
+  const activeMilestoneMarketId = openAwardedMarkets.some((market) => String(market.id) === milestoneMarketId)
     ? milestoneMarketId
-    : String(awardedMarkets[0]?.id ?? "");
+    : String(openAwardedMarkets[0]?.id ?? "");
 
   useEffect(() => {
     const updateClock = () => setNow(BigInt(Math.floor(Date.now() / 1000)));
@@ -202,10 +212,16 @@ export default function WorkflowPanel({ activeSection, markets, account, signer,
     let active = true;
     const reader = new Contract(configuredAddress, procurementAbi, createAmoyProvider());
     void Promise.all(currentAwards.map(async (market) => {
-      const rows = await reader.getMilestones(market.id) as MilestoneRow[];
-      return [String(market.id), rows] as const;
+      const [rows, completion] = await Promise.all([
+        reader.getMilestones(market.id) as Promise<MilestoneRow[]>,
+        reader.getMarketCompletionStatus(market.id) as Promise<MarketCompletionRow>,
+      ]);
+      return [String(market.id), { rows, completion }] as const;
     })).then((entries) => {
-      if (active) setMilestonesByMarket(Object.fromEntries(entries));
+      if (active) {
+        setMilestonesByMarket(Object.fromEntries(entries.map(([id, value]) => [id, value.rows])));
+        setCompletionByMarket(Object.fromEntries(entries.map(([id, value]) => [id, value.completion])));
+      }
     }).catch((loadError: unknown) => {
       if (active) setError(displayError(loadError));
     });
@@ -428,6 +444,14 @@ export default function WorkflowPanel({ activeSection, markets, account, signer,
     await execute("Validation enregistrée", (contract) => contract.getFunction("approveMilestone")(marketId, milestoneId));
   }
 
+  async function requestMarketCompletion(marketId: bigint) {
+    await execute("Demande de clôture envoyée", (contract) => contract.getFunction("requestMarketCompletion")(marketId));
+  }
+
+  async function approveMarketCompletion(marketId: bigint) {
+    await execute("Clôture du marché approuvée", (contract) => contract.getFunction("approveMarketCompletion")(marketId));
+  }
+
   async function requestMilestone(marketId: bigint, milestoneId: number) {
     await execute("Demande de jalon envoyée", (contract) => contract.getFunction("requestMilestone")(marketId, milestoneId));
   }
@@ -647,25 +671,36 @@ export default function WorkflowPanel({ activeSection, markets, account, signer,
           {roles.authority && (
             <ActionPanel title="Définir un jalon" description="Le total des jalons ne peut pas dépasser le montant attribué au marché.">
               <form className="grid grid-cols-1 gap-4 md:grid-cols-2" onSubmit={submitMilestone}>
-                <div className="md:col-span-2"><MarketSelect markets={awardedMarkets} value={activeMilestoneMarketId} onChange={setMilestoneMarketId} /></div>
+                <div className="md:col-span-2"><MarketSelect markets={openAwardedMarkets} value={activeMilestoneMarketId} onChange={setMilestoneMarketId} /></div>
                 <label className="block text-[11px] font-medium text-[#53635b]">Description
                   <input className={fieldClass} value={milestoneDescription} onChange={(event) => setMilestoneDescription(event.target.value)} maxLength={160} required />
                 </label>
                 <label className="block text-[11px] font-medium text-[#53635b]">Montant · unités de démonstration
                   <input className={fieldClass} type="number" min="1" step="1" value={milestoneAmount} onChange={(event) => setMilestoneAmount(event.target.value)} required />
                 </label>
-                <div><SubmitButton disabled={!signer || !isConfigured || awardedMarkets.length === 0} busy={busy}>Ajouter le jalon</SubmitButton></div>
+                <div><SubmitButton disabled={!signer || !isConfigured || openAwardedMarkets.length === 0} busy={busy}>Ajouter le jalon</SubmitButton></div>
               </form>
             </ActionPanel>
           )}
 
-          <ActionPanel title="Suivi et validation des jalons" description="Le titulaire demande la validation. L’autorité et un contrôleur distinct doivent approuver ; la libération est un événement comptable simulé, sans transfert de fonds.">
+          <ActionPanel title="Suivi et validation des jalons" description="Le titulaire demande la validation de chaque jalon. Après tous les paiements simulés, il demande la clôture ; l’Autorité et le Contrôleur l’approuvent séparément.">
             {awardedMarkets.length === 0 ? (
               <p className="text-[11px] text-[#718078]">Aucun marché attribué ne possède encore de jalons.</p>
             ) : (
               <div className="divide-y divide-[#e8ece7]">
                 {awardedMarkets.map((market) => {
                   const rows = milestonesByMarket[String(market.id)] ?? [];
+                  const completion = completionByMarket[String(market.id)] ?? {
+                    requested: false,
+                    authorityApproved: false,
+                    controllerApproved: false,
+                    authorityValidator: ZeroHash,
+                    controllerValidator: ZeroHash,
+                  };
+                  const isAwardedVendor = Boolean(account && market.vendor && getAddress(account) === getAddress(market.vendor));
+                  const allMilestonesPaid = rows.length > 0 && rows.every((milestone) => milestone.paid);
+                  const canApproveCompletion = (roles.authority && !completion.authorityApproved)
+                    || (roles.controller && !completion.controllerApproved);
                   return <div key={String(market.id)} className="py-4 first:pt-0 last:pb-0">
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <div className="text-[11px] font-semibold">MP-{String(market.id).padStart(4, "0")} · {market.title}</div>
@@ -674,7 +709,6 @@ export default function WorkflowPanel({ activeSection, markets, account, signer,
                     {rows.length === 0 ? <p className="mt-3 text-[10px] text-[#87928a]">Aucun jalon enregistré.</p> : (
                       <div className="mt-3 space-y-2">
                         {rows.map((milestone, index) => {
-                          const isWinner = account && market.vendor && getAddress(account) === getAddress(market.vendor);
                           const isAuthorityValidator = milestone.authorityValidator !== ZeroHash && account && getAddress(milestone.authorityValidator) === getAddress(account);
                           const isControllerValidator = milestone.controllerValidator !== ZeroHash && account && getAddress(milestone.controllerValidator) === getAddress(account);
                           const sameApprover = isAuthorityValidator || isControllerValidator;
@@ -690,12 +724,31 @@ export default function WorkflowPanel({ activeSection, markets, account, signer,
                                 {milestone.paid && <span className="font-semibold text-[#17684f]">Libération simulée</span>}
                               </div>
                             </div>
-                            {!milestone.requested && !milestone.paid && isWinner && <button type="button" disabled={busy} onClick={() => void requestMilestone(market.id, index)} className="h-8 rounded border border-[#dce3dc] bg-white px-2.5 text-[10px] font-semibold text-[#365a49] disabled:opacity-50">Demander validation</button>}
+                            {!milestone.requested && !milestone.paid && isAwardedVendor && <button type="button" disabled={busy} onClick={() => void requestMilestone(market.id, index)} className="h-8 rounded border border-[#dce3dc] bg-white px-2.5 text-[10px] font-semibold text-[#365a49] disabled:opacity-50">Demander validation</button>}
                             {milestone.requested && !milestone.paid && canApprove && !sameApprover && <button type="button" disabled={busy} onClick={() => void approveMilestone(market.id, index)} className="h-8 rounded border border-[#c6d9cd] bg-[#edf5ef] px-2.5 text-[10px] font-semibold text-[#17684f] disabled:opacity-50">{roles.authority && !milestone.authorityApproved ? "Valider comme autorité" : "Valider comme contrôleur"}</button>}
                           </div>;
                         })}
                       </div>
                     )}
+                    {market.status === 3 ? (
+                      <p className="mt-3 text-[10px] font-semibold text-[#17684f]">Marché bouclé : clôture demandée par l’entreprise et approuvée par l’Autorité et le Contrôleur.</p>
+                    ) : market.status === 2 && completion.requested ? (
+                      <div className="mt-3 flex flex-wrap items-center justify-between gap-3 border-t border-[#e8ece7] pt-3">
+                        <div className="text-[10px] text-[#718078]">
+                          Demande de clôture envoyée · Autorité {completion.authorityApproved ? "validée" : "en attente"} · Contrôleur {completion.controllerApproved ? "validé" : "en attente"}
+                        </div>
+                        {canApproveCompletion && <button type="button" disabled={busy || !signer} onClick={() => void approveMarketCompletion(market.id)} className="inline-flex h-9 items-center gap-2 rounded-md border border-[#c6d9cd] bg-[#edf5ef] px-3 text-[11px] font-semibold text-[#17684f] hover:bg-[#e1efe4] disabled:cursor-not-allowed disabled:opacity-50">
+                          <Check size={14} /> {roles.authority && !completion.authorityApproved ? "Approuver la clôture comme Autorité" : "Approuver la clôture comme Contrôleur"}
+                        </button>}
+                      </div>
+                    ) : market.status === 2 && isAwardedVendor && allMilestonesPaid ? (
+                      <div className="mt-3 flex flex-wrap items-center justify-between gap-3 border-t border-[#e8ece7] pt-3">
+                        <p className="text-[10px] text-[#718078]">Tous les jalons prévus sont payés. Demande la clôture du marché ; l’Autorité et le Contrôleur devront l’approuver.</p>
+                        <button type="button" disabled={busy || !signer} onClick={() => void requestMarketCompletion(market.id)} className="inline-flex h-9 items-center gap-2 rounded-md bg-[#17684f] px-3 text-[11px] font-semibold text-white hover:bg-[#104c3a] disabled:cursor-not-allowed disabled:opacity-50">
+                          <Check size={14} /> Demander la clôture
+                        </button>
+                      </div>
+                    ) : null}
                   </div>;
                 })}
               </div>
@@ -789,6 +842,12 @@ function describeEvent(event: EventLog) {
       return `Jalon ${String(args.milestoneId)} validé par ${args.isAuthority ? "l’autorité" : "le contrôleur"}`;
     case "SimulatedPaymentReleased":
       return `Paiement simulé · ${formatAmount(BigInt(args.amount))} unités`;
+    case "MarketCompletionRequested":
+      return `Clôture demandée par le titulaire · MP-${marketId.padStart(4, "0")}`;
+    case "MarketCompletionApproved":
+      return `Clôture approuvée par ${args.isAuthority ? "l’autorité" : "le contrôleur"} · MP-${marketId.padStart(4, "0")}`;
+    case "MarketCompleted":
+      return `Marché bouclé · MP-${marketId.padStart(4, "0")}`;
     default:
       return `Événement du marché MP-${marketId.padStart(4, "0")}`;
   }

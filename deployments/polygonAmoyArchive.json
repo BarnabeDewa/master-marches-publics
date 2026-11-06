@@ -1,0 +1,17 @@
+{
+  "network": "Polygon Amoy",
+  "chainId": 80002,
+  "contract": "PublicProcurement",
+  "purpose": "Read-only archive of markets deployed before two-party market completion approval",
+  "address": "0x15Ba0b28c6DAc1d865F891c083A61d3E6808b982",
+  "deployer": "0xc310fE2a32c033a601B123F250Ae9Aa3042Ef282",
+  "authority": "0x378fab7E67135c8344b433adbf481638bf184A91",
+  "controller": "0x1817a5b5cA4f13720bD022BdEcbfc76B75Eb5bb3",
+  "deploymentBlock": 51909186,
+  "transactionHash": "0x369ba97ca0d64f1ea2dbe973636a118d02f66df3603bb1e8dbbfb491363fd6b2",
+  "gasUsed": "3411584",
+  "effectiveGasPriceWei": "30000000001",
+  "estimatedTestGasCostPOL": "0.102347520003411584",
+  "explorer": "https://amoy.polygonscan.com/address/0x15Ba0b28c6DAc1d865F891c083A61d3E6808b982",
+  "archivedAt": "2026-11-06"
+}

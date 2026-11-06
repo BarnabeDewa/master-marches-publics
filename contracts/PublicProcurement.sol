@@ -49,10 +49,19 @@ contract PublicProcurement is AccessControl {
         address controllerValidator;
     }
 
+    struct MarketCompletion {
+        bool requested;
+        bool authorityApproved;
+        bool controllerApproved;
+        address authorityValidator;
+        address controllerValidator;
+    }
+
     uint256 public marketCount;
     mapping(uint256 marketId => Market market) public markets;
     mapping(uint256 marketId => mapping(address bidder => Bid bid)) public bids;
     mapping(uint256 marketId => Milestone[] milestones) private _milestones;
+    mapping(uint256 marketId => MarketCompletion completion) private _marketCompletions;
     mapping(uint256 marketId => uint256 total) public totalPaid;
     mapping(uint256 marketId => uint256 total) public totalMilestoneValue;
 
@@ -65,6 +74,9 @@ contract PublicProcurement is AccessControl {
     event MilestoneRequested(uint256 indexed marketId, uint256 indexed milestoneId, address indexed vendor);
     event MilestoneApproved(uint256 indexed marketId, uint256 indexed milestoneId, address indexed validator, bool isAuthority);
     event SimulatedPaymentReleased(uint256 indexed marketId, uint256 indexed milestoneId, uint256 amount);
+    event MarketCompletionRequested(uint256 indexed marketId, address indexed vendor);
+    event MarketCompletionApproved(uint256 indexed marketId, address indexed validator, bool isAuthority);
+    event MarketCompleted(uint256 indexed marketId, address indexed vendor);
 
     error InvalidInput();
     error InvalidPhase();
@@ -76,6 +88,7 @@ contract PublicProcurement is AccessControl {
     error ApproversMustDiffer();
     error BudgetExceeded();
     error IncompatibleRoles();
+    error MarketNotReadyToComplete();
 
     constructor(address admin, address authority, address controller) {
         if (
@@ -215,7 +228,10 @@ contract PublicProcurement is AccessControl {
         returns (uint256 milestoneId)
     {
         Market storage market = _getMarket(marketId);
-        if (market.status != MarketStatus.Awarded || bytes(description).length == 0 || amount == 0) {
+        if (
+            market.status != MarketStatus.Awarded || _marketCompletions[marketId].requested
+                || bytes(description).length == 0 || amount == 0
+        ) {
             revert InvalidMilestone();
         }
         if (totalMilestoneValue[marketId] + amount > market.awardedAmount) revert BudgetExceeded();
@@ -239,7 +255,10 @@ contract PublicProcurement is AccessControl {
 
     function requestMilestone(uint256 marketId, uint256 milestoneId) external {
         Market storage market = _getMarket(marketId);
-        if (msg.sender != market.awardedVendor) revert InvalidMilestone();
+        if (
+            market.status != MarketStatus.Awarded || _marketCompletions[marketId].requested
+                || msg.sender != market.awardedVendor
+        ) revert InvalidMilestone();
         Milestone storage milestone = _getMilestone(marketId, milestoneId);
         if (milestone.requested || milestone.paid) revert InvalidMilestone();
 
@@ -248,6 +267,8 @@ contract PublicProcurement is AccessControl {
     }
 
     function approveMilestone(uint256 marketId, uint256 milestoneId) external {
+        Market storage market = _getMarket(marketId);
+        if (market.status != MarketStatus.Awarded) revert InvalidMilestone();
         Milestone storage milestone = _getMilestone(marketId, milestoneId);
         if (!milestone.requested || milestone.paid) revert InvalidMilestone();
 
@@ -272,6 +293,48 @@ contract PublicProcurement is AccessControl {
             totalPaid[marketId] = newTotalPaid;
             emit SimulatedPaymentReleased(marketId, milestoneId, milestone.amount);
         }
+    }
+
+    function requestMarketCompletion(uint256 marketId) external {
+        Market storage market = _getMarket(marketId);
+        if (market.status != MarketStatus.Awarded || msg.sender != market.awardedVendor) revert InvalidMilestone();
+        if (_milestones[marketId].length == 0 || totalPaid[marketId] != totalMilestoneValue[marketId]) {
+            revert MarketNotReadyToComplete();
+        }
+
+        MarketCompletion storage completion = _marketCompletions[marketId];
+        if (completion.requested) revert MarketNotReadyToComplete();
+        completion.requested = true;
+        emit MarketCompletionRequested(marketId, msg.sender);
+    }
+
+    function approveMarketCompletion(uint256 marketId) external {
+        Market storage market = _getMarket(marketId);
+        MarketCompletion storage completion = _marketCompletions[marketId];
+        if (market.status != MarketStatus.Awarded || !completion.requested) revert MarketNotReadyToComplete();
+
+        if (hasRole(AUTHORITY_ROLE, msg.sender) && !completion.authorityApproved) {
+            completion.authorityApproved = true;
+            completion.authorityValidator = msg.sender;
+            emit MarketCompletionApproved(marketId, msg.sender, true);
+        } else if (hasRole(CONTROLLER_ROLE, msg.sender) && !completion.controllerApproved) {
+            completion.controllerApproved = true;
+            completion.controllerValidator = msg.sender;
+            emit MarketCompletionApproved(marketId, msg.sender, false);
+        } else {
+            revert DuplicateApproval();
+        }
+
+        if (completion.authorityApproved && completion.controllerApproved) {
+            if (completion.authorityValidator == completion.controllerValidator) revert ApproversMustDiffer();
+            market.status = MarketStatus.Completed;
+            emit MarketCompleted(marketId, market.awardedVendor);
+        }
+    }
+
+    function getMarketCompletionStatus(uint256 marketId) external view returns (MarketCompletion memory) {
+        _getMarket(marketId);
+        return _marketCompletions[marketId];
     }
 
     function getMilestones(uint256 marketId) external view returns (Milestone[] memory) {

@@ -19,7 +19,7 @@ import {
 import { Contract } from "ethers";
 import { useEffect, useState } from "react";
 import ProcurementDashboard from "@/app/procurement-dashboard";
-import { createAmoyProvider, getMarketStatusLabel, procurementAbi } from "@/lib/procurement";
+import { createAmoyProvider, getMarketStatusLabel, polygonAmoy, procurementAbi } from "@/lib/procurement";
 import type { WorkspaceRequest } from "@/lib/procurement";
 
 type TenderSummary = {
@@ -39,6 +39,12 @@ type RoleOption = {
 };
 
 const contractAddress = process.env.NEXT_PUBLIC_CONTRACT_ADDRESS;
+const archiveContractAddress = process.env.NEXT_PUBLIC_ARCHIVE_CONTRACT_ADDRESS;
+const archiveContractIsConfigured = Boolean(
+  archiveContractAddress
+  && /^0x[a-fA-F0-9]{40}$/.test(archiveContractAddress)
+  && archiveContractAddress.toLowerCase() !== contractAddress?.toLowerCase(),
+);
 
 const roleOptions: RoleOption[] = [
   { id: "visitor", title: "Visiteur public", detail: "Consulter les marchés et les décisions", icon: Eye, access: "Sans portefeuille" },
@@ -98,9 +104,12 @@ function PublicHome({
   onSelectProfile: (profile: WorkspaceRequest) => void;
 }) {
   const [tenders, setTenders] = useState<TenderSummary[]>([]);
+  const [archivedTenders, setArchivedTenders] = useState<TenderSummary[]>([]);
   const [marketCount, setMarketCount] = useState<number | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [isArchiveLoading, setIsArchiveLoading] = useState(archiveContractIsConfigured);
   const [loadError, setLoadError] = useState("");
+  const [archiveError, setArchiveError] = useState("");
 
   useEffect(() => {
     let active = true;
@@ -160,6 +169,57 @@ function PublicHome({
     };
   }, []);
 
+  useEffect(() => {
+    if (!archiveContractIsConfigured || !archiveContractAddress) return;
+
+    let active = true;
+    const timer = window.setTimeout(() => {
+      void (async () => {
+        try {
+          const archive = new Contract(archiveContractAddress, procurementAbi, createAmoyProvider());
+          const count = Number(await archive.marketCount());
+          if (count > 300) throw new Error("Le volume des archives dépasse la limite de lecture publique.");
+          const rows: TenderSummary[] = [];
+          for (let marketNumber = count; marketNumber > Math.max(0, count - 50); marketNumber -= 1) {
+            const marketId = BigInt(marketNumber);
+            const market = await archive.markets(marketId);
+            const status = Number(market.status);
+            const deadline = status === 0
+              ? market.commitDeadline as bigint
+              : status === 1
+                ? market.revealDeadline as bigint
+                : market.awardedAt as bigint;
+            rows.push({
+              id: marketId,
+              title: market.title as string,
+              status: getMarketStatusLabel(
+                status,
+                market.commitDeadline as bigint,
+                market.revealDeadline as bigint,
+                BigInt(Math.floor(Date.now() / 1000)),
+              ),
+              deadline: formatPublicDate(deadline),
+              budget: formatPublicAmount(market.indicativeBudget as bigint),
+            });
+          }
+          if (active) {
+            setArchivedTenders(rows);
+            setArchiveError("");
+          }
+        } catch (error) {
+          if (active) setArchiveError(error instanceof Error ? error.message : "Les archives sont temporairement indisponibles.");
+        } finally {
+          if (active) setIsArchiveLoading(false);
+        }
+      })();
+    }, 0);
+
+    return () => {
+      active = false;
+      window.clearTimeout(timer);
+    };
+  }, []);
+
   return (
     <main className="public-portal">
       <header className="public-header">
@@ -197,7 +257,7 @@ function PublicHome({
 
       <section className="public-stat-band" aria-label="État du registre public">
         <div className="public-stat">
-          <span className="public-stat-label">Marchés inscrits</span>
+          <span className="public-stat-label">Marchés du contrat actif</span>
           <strong>{marketCount === null ? "—" : marketCount}</strong>
           <small>{isLoading ? "Lecture du registre…" : "Lecture sur Polygon Amoy"}</small>
         </div>
@@ -217,7 +277,7 @@ function PublicHome({
         <div className="public-section-heading">
           <div>
             <p className="public-eyebrow public-eyebrow-dark"><span /> REGISTRE PUBLIC</p>
-            <h2>Appels d’offres publiés</h2>
+            <h2>Appels d’offres du contrat actif</h2>
           </div>
           <span className="public-record-count">{marketCount === null ? "Connexion en lecture" : `${marketCount} marché${marketCount === 1 ? "" : "s"}`}</span>
         </div>
@@ -243,6 +303,38 @@ function PublicHome({
             <span className="public-empty-icon"><ClipboardList size={20} /></span>
             <p>{loadError ? "Le registre est momentanément inaccessible." : marketCount === null ? "Le registre public sera disponible après la configuration du contrat." : "Aucun appel d’offres n’a encore été publié."}</p>
           </div>
+        )}
+
+        {archiveContractIsConfigured && archiveContractAddress && (
+          <section className="mt-8 border-t border-[#e2e8e2] pt-6" aria-label="Archives des marchés précédents">
+            <div className="flex flex-wrap items-end justify-between gap-3">
+              <div>
+                <p className="public-eyebrow public-eyebrow-dark"><span /> ARCHIVES</p>
+                <h3 className="mt-2 text-[16px] font-semibold text-[#263d32]">Marchés du contrat précédent</h3>
+                <p className="mt-1 text-[10px] text-[#78847c]">Consultation historique uniquement ; les actions se font sur le contrat actif.</p>
+              </div>
+              <a className="flex items-center gap-1 text-[10px] font-semibold text-[#17684f] no-underline" href={`${polygonAmoy.explorer}/address/${archiveContractAddress}`} target="_blank" rel="noreferrer">
+                Contrat archivé <ArrowUpRight size={12} />
+              </a>
+            </div>
+            {archiveError && <p className="public-load-error mt-3" role="status">{archiveError}</p>}
+            {isArchiveLoading ? (
+              <p className="mt-3 text-[11px] text-[#78847c]">Lecture des archives Polygon Amoy…</p>
+            ) : archivedTenders.length > 0 ? (
+              <div className="mt-3 divide-y divide-[#e2e8e2] border-y border-[#e2e8e2]">
+                {archivedTenders.map((tender) => (
+                  <article key={`archive-${String(tender.id)}`} className="grid grid-cols-1 gap-2 py-3 text-[11px] sm:grid-cols-[minmax(0,1.6fr)_minmax(130px,0.8fr)_100px_100px] sm:items-center">
+                    <div className="min-w-0"><small className="font-mono text-[9px] text-[#87928a]">ARCHIVE · MP-{String(tender.id).padStart(4, "0")}</small><strong className="mt-1 block truncate text-[#31483d]">{tender.title}</strong></div>
+                    <span className="text-[#876018]">{tender.status}</span>
+                    <span className="text-[#68766e]">{tender.deadline}</span>
+                    <span className="font-mono text-[#33483d]">{tender.budget} unités</span>
+                  </article>
+                ))}
+              </div>
+            ) : (
+              <p className="mt-3 text-[11px] text-[#78847c]">Aucun marché archivé à afficher.</p>
+            )}
+          </section>
         )}
       </section>
 

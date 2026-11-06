@@ -27,6 +27,9 @@ export const procurementAbi = [
   "function createMilestone(uint256 marketId,string description,uint256 amount) returns (uint256)",
   "function requestMilestone(uint256 marketId,uint256 milestoneId)",
   "function approveMilestone(uint256 marketId,uint256 milestoneId)",
+  "function requestMarketCompletion(uint256 marketId)",
+  "function approveMarketCompletion(uint256 marketId)",
+  "function getMarketCompletionStatus(uint256 marketId) view returns (tuple(bool requested,bool authorityApproved,bool controllerApproved,address authorityValidator,address controllerValidator))",
   "function getMilestones(uint256 marketId) view returns (tuple(string description,uint256 amount,bool requested,bool authorityApproved,bool controllerApproved,bool paid,address authorityValidator,address controllerValidator)[])",
   "function hasRole(bytes32 role,address account) view returns (bool)",
   "function grantRole(bytes32 role,address account)",
@@ -43,6 +46,9 @@ export const procurementAbi = [
   "event MilestoneRequested(uint256 indexed marketId,uint256 indexed milestoneId,address indexed vendor)",
   "event MilestoneApproved(uint256 indexed marketId,uint256 indexed milestoneId,address indexed validator,bool isAuthority)",
   "event SimulatedPaymentReleased(uint256 indexed marketId,uint256 indexed milestoneId,uint256 amount)",
+  "event MarketCompletionRequested(uint256 indexed marketId,address indexed vendor)",
+  "event MarketCompletionApproved(uint256 indexed marketId,address indexed validator,bool isAuthority)",
+  "event MarketCompleted(uint256 indexed marketId,address indexed vendor)",
 ] as const;
 
 export const marketStatuses = [

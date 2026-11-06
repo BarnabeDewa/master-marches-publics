@@ -208,4 +208,45 @@ describe("PublicProcurement", function () {
     await procurement.connect(authority).createMilestone(1n, "Jalon A", 400n);
     await expect(procurement.connect(authority).createMilestone(1n, "Jalon B", 201n)).to.revert(ethers);
   });
+
+  it("requiert la demande du titulaire puis les validations Autorité et Contrôleur pour boucler", async function () {
+    const { ethers, procurement, authority, controller, vendor, visitor } = await deployFixture();
+    const { commitDeadline, revealDeadline } = await createMarket(procurement, authority);
+    const bid = await commitBid(ethers, procurement, vendor, 800n);
+
+    await ethers.provider.send("evm_setNextBlockTimestamp", [Number(commitDeadline)]);
+    await procurement.openRevealPeriod(1n);
+    await procurement.connect(vendor).revealBid(1n, bid.amount, bid.offerText, bid.secret);
+    await ethers.provider.send("evm_setNextBlockTimestamp", [Number(revealDeadline)]);
+    await procurement.connect(authority).awardMarket(1n, vendor.address, "DEC-001");
+
+    await expect(procurement.connect(vendor).requestMarketCompletion(1n))
+      .to.be.revertedWithCustomError(procurement, "MarketNotReadyToComplete");
+    await procurement.connect(authority).createMilestone(1n, "Première phase", 300n);
+    await procurement.connect(authority).createMilestone(1n, "Deuxième phase", 500n);
+    await procurement.connect(vendor).requestMilestone(1n, 0n);
+    await procurement.connect(authority).approveMilestone(1n, 0n);
+    await procurement.connect(controller).approveMilestone(1n, 0n);
+
+    await expect(procurement.connect(vendor).requestMarketCompletion(1n))
+      .to.be.revertedWithCustomError(procurement, "MarketNotReadyToComplete");
+    await procurement.connect(vendor).requestMilestone(1n, 1n);
+    await procurement.connect(authority).approveMilestone(1n, 1n);
+    await procurement.connect(controller).approveMilestone(1n, 1n);
+    await expect(procurement.connect(vendor).requestMarketCompletion(1n))
+      .to.emit(procurement, "MarketCompletionRequested")
+      .withArgs(1n, vendor.address);
+    await expect(procurement.connect(authority).createMilestone(1n, "Phase ajoutée après demande de clôture", 1n))
+      .to.be.revertedWithCustomError(procurement, "InvalidMilestone");
+    await procurement.connect(authority).approveMarketCompletion(1n);
+    expect((await procurement.markets(1n)).status).to.equal(2n);
+    await expect(procurement.connect(visitor).approveMarketCompletion(1n))
+      .to.be.revertedWithCustomError(procurement, "DuplicateApproval");
+    await expect(procurement.connect(controller).approveMarketCompletion(1n))
+      .to.emit(procurement, "MarketCompleted")
+      .withArgs(1n, vendor.address);
+    expect((await procurement.markets(1n)).status).to.equal(3n);
+    await expect(procurement.connect(authority).createMilestone(1n, "Phase ajoutée après clôture", 1n))
+      .to.be.revertedWithCustomError(procurement, "InvalidMilestone");
+  });
 });
