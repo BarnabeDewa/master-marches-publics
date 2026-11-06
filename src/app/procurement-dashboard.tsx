@@ -611,7 +611,11 @@ function MarketTable({ markets, now }: { markets: MarketRow[]; now: bigint }) {
         <tbody>
           {markets.map((market) => {
             const status = getMarketStatusLabel(market.status, market.commitDeadline, market.revealDeadline, now);
-            const deadline = market.status <= 1 ? market.commitDeadline : market.awardedAt;
+            const deadline = market.status === 0
+              ? market.commitDeadline
+              : market.status === 1
+                ? market.revealDeadline
+                : market.awardedAt;
             return (
               <tr key={String(market.id)}>
                 <td>

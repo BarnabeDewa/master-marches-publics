@@ -123,7 +123,11 @@ function PublicHome({
             const marketId = BigInt(marketNumber);
             const market = await contract.markets(marketId);
             const status = Number(market.status);
-            const deadline = status <= 1 ? market.commitDeadline as bigint : market.awardedAt as bigint;
+            const deadline = status === 0
+              ? market.commitDeadline as bigint
+              : status === 1
+                ? market.revealDeadline as bigint
+                : market.awardedAt as bigint;
             rows.push({
               id: marketId,
               title: market.title as string,
