@@ -51,6 +51,14 @@ type HistoryRow = {
   transactionHash: string;
 };
 
+type RevealedOfferRow = {
+  marketId: string;
+  bidder: string;
+  amount: bigint;
+  proposalHash: string;
+  offerText: string;
+};
+
 const contractAddress = process.env.NEXT_PUBLIC_CONTRACT_ADDRESS;
 const fieldClass = "mt-1 h-10 w-full rounded-md border border-[#dce3dc] bg-white px-3 text-[12px] text-[#243a30] outline-none transition focus:border-[#17684f] focus:ring-2 focus:ring-[#17684f]/10";
 const textAreaClass = "mt-1 min-h-24 w-full resize-y rounded-md border border-[#dce3dc] bg-white px-3 py-2.5 text-[12px] leading-5 text-[#243a30] outline-none transition focus:border-[#17684f] focus:ring-2 focus:ring-[#17684f]/10";
@@ -158,18 +166,22 @@ export default function WorkflowPanel({ activeSection, markets, account, signer,
   const [roleToManage, setRoleToManage] = useState<"authority" | "controller" | "company">("company");
   const [milestonesByMarket, setMilestonesByMarket] = useState<Record<string, MilestoneRow[]>>({});
   const [history, setHistory] = useState<HistoryRow[]>([]);
+  const [revealedOffers, setRevealedOffers] = useState<Record<string, RevealedOfferRow[]>>({});
+  const [isLoadingRevealedOffers, setIsLoadingRevealedOffers] = useState(false);
 
   const configuredAddress = isConfigured && contractAddress ? contractAddress : "";
   const awardedMarkets = markets.filter((market) => market.status === 2 || market.status === 3);
   const commitMarkets = markets.filter((market) => market.status === 0 && market.commitDeadline > now);
   const revealMarkets = markets.filter((market) => market.status === 1);
   const awardableMarkets = revealMarkets.filter((market) => market.revealDeadline <= now);
+  const awardableMarketKey = awardableMarkets.map((market) => String(market.id)).join(",");
   const activeCommitMarketId = commitMarkets.some((market) => String(market.id) === commitMarketId)
     ? commitMarketId
     : String(commitMarkets[0]?.id ?? "");
   const activeAwardMarketId = awardableMarkets.some((market) => String(market.id) === awardMarketId)
     ? awardMarketId
     : String(awardableMarkets[0]?.id ?? "");
+  const selectedAwardOffers = revealedOffers[activeAwardMarketId] ?? [];
   const activeMilestoneMarketId = awardedMarkets.some((market) => String(market.id) === milestoneMarketId)
     ? milestoneMarketId
     : String(awardedMarkets[0]?.id ?? "");
@@ -235,6 +247,53 @@ export default function WorkflowPanel({ activeSection, markets, account, signer,
     });
     return () => { active = false; };
   }, [activeSection, configuredAddress]);
+
+  useEffect(() => {
+    if (activeSection !== "awards" || !configuredAddress || !awardableMarketKey) return;
+    let active = true;
+    const requestedMarketIds = new Set(awardableMarketKey.split(","));
+    const provider = createAmoyProvider();
+    const contract = new Contract(configuredAddress, procurementAbi, provider);
+    void (async () => {
+      setIsLoadingRevealedOffers(true);
+      try {
+        const latestBlock = await provider.getBlockNumber();
+        const configuredBlock = process.env.NEXT_PUBLIC_DEPLOYMENT_BLOCK;
+        const deploymentBlock = configuredBlock ? Number(configuredBlock) : Number.NaN;
+        const fromBlock = Number.isSafeInteger(deploymentBlock) && deploymentBlock >= 0
+          ? deploymentBlock
+          : Math.max(0, latestBlock - 50_000);
+        const matchingEvents: EventLog[] = [];
+        const chunkSize = 8_000;
+        for (let chunkStart = fromBlock; chunkStart <= latestBlock; chunkStart += chunkSize) {
+          const chunkEnd = Math.min(latestBlock, chunkStart + chunkSize - 1);
+          const events = await contract.queryFilter(contract.filters.BidRevealed(), chunkStart, chunkEnd) as EventLog[];
+          matchingEvents.push(...events.filter((event) => requestedMarketIds.has(String(event.args.marketId))));
+        }
+
+        const rows = await Promise.all(matchingEvents.map(async (event) => {
+          const transaction = await provider.getTransaction(event.transactionHash);
+          const decoded = transaction ? contract.interface.parseTransaction({ data: transaction.data }) : null;
+          return {
+            marketId: String(event.args.marketId),
+            bidder: getAddress(String(event.args.bidder)),
+            amount: BigInt(event.args.amount),
+            proposalHash: String(event.args.proposalHash),
+            offerText: decoded?.name === "revealBid" ? String(decoded.args[2]) : "",
+          } satisfies RevealedOfferRow;
+        }));
+
+        const grouped: Record<string, RevealedOfferRow[]> = {};
+        for (const row of rows) grouped[row.marketId] = [...(grouped[row.marketId] ?? []), row];
+        if (active) setRevealedOffers(grouped);
+      } catch (loadError) {
+        if (active) setError(displayError(loadError));
+      } finally {
+        if (active) setIsLoadingRevealedOffers(false);
+      }
+    })();
+    return () => { active = false; };
+  }, [activeSection, awardableMarketKey, configuredAddress]);
 
   async function execute(label: string, operation: (contract: Contract) => Promise<TransactionLike>) {
     setError("");
@@ -519,21 +578,66 @@ export default function WorkflowPanel({ activeSection, markets, account, signer,
       )}
 
       {activeSection === "awards" && (
-        <ActionPanel title="Enregistrer une décision d’attribution" description="Réservé à l’autorité contractante, après la clôture de la révélation. Le contrat vérifie que le titulaire a révélé une offre valide dans le budget.">
-          {roles.authority ? (
-            <form className="grid grid-cols-1 gap-4 md:grid-cols-2" onSubmit={submitAward}>
-              <div className="md:col-span-2"><MarketSelect markets={awardableMarkets} value={activeAwardMarketId} onChange={setAwardMarketId} /></div>
-              <label className="block text-[11px] font-medium text-[#53635b]">Adresse de l’entreprise retenue
-                <input className={fieldClass} value={awardVendor} onChange={(event) => setAwardVendor(event.target.value)} placeholder="0x…" required />
-              </label>
-              <label className="block text-[11px] font-medium text-[#53635b]">Référence de la décision
-                <input className={fieldClass} value={decisionReference} onChange={(event) => setDecisionReference(event.target.value)} maxLength={128} required />
-              </label>
-              <div className="flex items-start gap-2 text-[10px] leading-5 text-[#718078] md:col-span-2">
-                <ShieldCheck size={14} className="mt-0.5 shrink-0 text-[#17684f]" /> L’autorité décide du titulaire. La chaîne vérifie l’offre mais ne juge pas l’équité de la décision.
+        <ActionPanel title="Enregistrer une décision d’attribution" description="Après la fin des révélations, les offres validées apparaissent ici. Le statut on-chain reste en phase Révélation jusqu’à l’attribution.">
+          {roles.authority ? awardableMarkets.length > 0 ? (
+            <div className="space-y-5">
+              <div>
+                <MarketSelect
+                  markets={awardableMarkets}
+                  value={activeAwardMarketId}
+                  onChange={(value) => {
+                    setAwardMarketId(value);
+                    setAwardVendor("");
+                  }}
+                />
               </div>
-              <div><SubmitButton disabled={!signer || !isConfigured || awardableMarkets.length === 0} busy={busy}>Enregistrer l’attribution</SubmitButton></div>
-            </form>
+
+              <section className="border-t border-[#e8ece7] pt-4" aria-label="Offres révélées">
+                <h3 className="text-[12px] font-semibold text-[#2c4338]">Offres révélées · MP-{activeAwardMarketId.padStart(4, "0")}</h3>
+                {isLoadingRevealedOffers ? (
+                  <p className="mt-3 text-[11px] text-[#718078]">Lecture des offres révélées sur Polygon Amoy…</p>
+                ) : selectedAwardOffers.length === 0 ? (
+                  <p className="mt-3 text-[11px] text-[#718078]">Aucune entreprise n’a encore révélé d’offre pour ce marché.</p>
+                ) : (
+                  <div className="mt-2 divide-y divide-[#e8ece7]">
+                    {selectedAwardOffers.map((offer) => (
+                      <article key={offer.bidder} className="space-y-2 py-3 first:pt-1">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <div className="text-[11px] font-semibold text-[#31483d]">
+                            {shortenAddress(offer.bidder)} <span className="font-normal text-[#718078]">· {formatAmount(offer.amount)} unités</span>
+                          </div>
+                          <button type="button" onClick={() => setAwardVendor(offer.bidder)} className="h-8 rounded-md border border-[#dce3dc] px-3 text-[10px] font-semibold text-[#365a49] hover:bg-[#f7f9f6]">
+                            Choisir cette offre
+                          </button>
+                        </div>
+                        <p className="whitespace-pre-wrap break-words text-[11px] leading-5 text-[#53635b]">{offer.offerText || "Texte de l’offre indisponible via ce RPC."}</p>
+                        <p className="break-all font-mono text-[9px] text-[#87928a]">Empreinte : {offer.proposalHash}</p>
+                      </article>
+                    ))}
+                  </div>
+                )}
+              </section>
+
+              <form className="grid grid-cols-1 gap-4 border-t border-[#e8ece7] pt-4 md:grid-cols-2" onSubmit={submitAward}>
+                <label className="block text-[11px] font-medium text-[#53635b]">Entreprise retenue
+                  <select className={fieldClass} value={awardVendor} onChange={(event) => setAwardVendor(event.target.value)} required>
+                    <option value="">Sélectionner une offre révélée</option>
+                    {selectedAwardOffers.map((offer) => (
+                      <option key={offer.bidder} value={offer.bidder}>{shortenAddress(offer.bidder)} · {formatAmount(offer.amount)} unités</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="block text-[11px] font-medium text-[#53635b]">Référence de la décision
+                  <input className={fieldClass} value={decisionReference} onChange={(event) => setDecisionReference(event.target.value)} maxLength={128} required />
+                </label>
+                <div className="flex items-start gap-2 text-[10px] leading-5 text-[#718078] md:col-span-2">
+                  <ShieldCheck size={14} className="mt-0.5 shrink-0 text-[#17684f]" /> L’autorité décide du titulaire. La chaîne vérifie l’offre mais ne juge pas l’équité de la décision.
+                </div>
+                <div><SubmitButton disabled={!signer || !isConfigured || selectedAwardOffers.length === 0 || !awardVendor} busy={busy}>Enregistrer l’attribution</SubmitButton></div>
+              </form>
+            </div>
+          ) : (
+            <RoleNotice text="Aucun marché n’a encore atteint la fin des révélations. Après la clôture des engagements, ouvre la période de révélation ; les offres seront listées ici à son échéance." />
           ) : <RoleNotice text="L’adresse connectée n’a pas le rôle Autorité contractante sur ce contrat." />}
         </ActionPanel>
       )}

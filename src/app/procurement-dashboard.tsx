@@ -28,7 +28,7 @@ import { BrowserProvider, Contract, ZeroHash } from "ethers";
 import type { JsonRpcProvider, Signer } from "ethers";
 import { useEffect, useEffectEvent, useRef, useState } from "react";
 import type { ContractRoles, MarketRow, SectionId, WorkspaceRequest } from "@/lib/procurement";
-import { createAmoyProvider, marketStatuses, polygonAmoy, procurementAbi } from "@/lib/procurement";
+import { createAmoyProvider, getMarketStatusLabel, polygonAmoy, procurementAbi } from "@/lib/procurement";
 import WorkflowPanel from "@/components/WorkflowPanel";
 
 const contractAddress = process.env.NEXT_PUBLIC_CONTRACT_ADDRESS;
@@ -93,14 +93,9 @@ function formatAmount(amount: bigint) {
   return new Intl.NumberFormat("fr-CD").format(amount);
 }
 
-function getMarketStatus(market: MarketRow, now: bigint) {
-  if (market.status !== 0) return marketStatuses[market.status] ?? "Statut inconnu";
-  if (now >= market.commitDeadline) return "À ouvrir";
-  return marketStatuses[0];
-}
-
 function getStatusClass(status: string) {
   if (status.includes("attribué") || status === "Terminé") return "status-green";
+  if (status === "Révélations clôturées") return "status-neutral";
   if (status.includes("Révélation") || status === "À ouvrir") return "status-amber";
   if (status === "Annulé") return "status-orange";
   return "status-neutral";
@@ -615,7 +610,7 @@ function MarketTable({ markets, now }: { markets: MarketRow[]; now: bigint }) {
         </thead>
         <tbody>
           {markets.map((market) => {
-            const status = getMarketStatus(market, now);
+            const status = getMarketStatusLabel(market.status, market.commitDeadline, market.revealDeadline, now);
             const deadline = market.status <= 1 ? market.commitDeadline : market.awardedAt;
             return (
               <tr key={String(market.id)}>

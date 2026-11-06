@@ -19,7 +19,7 @@ import {
 import { Contract } from "ethers";
 import { useEffect, useState } from "react";
 import ProcurementDashboard from "@/app/procurement-dashboard";
-import { createAmoyProvider, marketStatuses, procurementAbi } from "@/lib/procurement";
+import { createAmoyProvider, getMarketStatusLabel, procurementAbi } from "@/lib/procurement";
 import type { WorkspaceRequest } from "@/lib/procurement";
 
 type TenderSummary = {
@@ -47,11 +47,6 @@ const roleOptions: RoleOption[] = [
   { id: "controller", title: "Contrôleur", detail: "Valider les jalons d’exécution", icon: ShieldCheck, access: "Rôle attribué par l’administration" },
   { id: "administrator", title: "Administrateur", detail: "Gérer les rôles métier", icon: BadgeCheck, access: "Portefeuille administrateur" },
 ];
-
-function displayStatus(status: number, commitDeadline: bigint) {
-  if (status === 0 && BigInt(Math.floor(Date.now() / 1000)) >= commitDeadline) return "À ouvrir";
-  return marketStatuses[status] ?? "Statut inconnu";
-}
 
 function formatPublicDate(timestamp: bigint) {
   return new Intl.DateTimeFormat("fr-CD", { dateStyle: "medium", timeZone: "Africa/Kinshasa" })
@@ -132,7 +127,12 @@ function PublicHome({
             rows.push({
               id: marketId,
               title: market.title as string,
-              status: displayStatus(status, market.commitDeadline as bigint),
+              status: getMarketStatusLabel(
+                status,
+                market.commitDeadline as bigint,
+                market.revealDeadline as bigint,
+                BigInt(Math.floor(Date.now() / 1000)),
+              ),
               deadline: formatPublicDate(deadline),
               budget: formatPublicAmount(market.indicativeBudget as bigint),
             });

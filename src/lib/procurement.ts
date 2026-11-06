@@ -53,6 +53,12 @@ export const marketStatuses = [
   "Annulé",
 ] as const;
 
+export function getMarketStatusLabel(status: number, commitDeadline: bigint, revealDeadline: bigint, now: bigint) {
+  if (status === 0 && now >= commitDeadline) return "À ouvrir";
+  if (status === 1 && now >= revealDeadline) return "Révélations clôturées";
+  return marketStatuses[status] ?? "Statut inconnu";
+}
+
 export type SectionId = "overview" | "tenders" | "sealed" | "awards" | "milestones" | "public" | "admin";
 export type WorkspaceRequest = "visitor" | "company" | "authority" | "controller" | "administrator";
 
